@@ -2,7 +2,7 @@
 
 # Colors
 COLOR_ERROR="\e[38;5;198m"
-COLOR_NONE="\e[0m"
+COLOR_NONE="\e[1m"
 COLOR_SUCC="\e[92m"
 COLOR_INFO="\e[94m"
 COLOR_WARN="\e[93m"
@@ -27,6 +27,10 @@ print_error() {
 
 print_warn() {
     echo -e "${COLOR_WARN}[WARN] $1${COLOR_NONE}"
+}
+
+print_divider() {
+    echo -e "${COLOR_INFO}----------------------------------------${COLOR_NONE}"
 }
 
 # 检测系统类型和版本
@@ -209,7 +213,7 @@ create_cert() {
     print_info "开始生成 SSL 证书"
     print_warn "注意：生成证书前,需要将域名指向一个有效的 IP,否则无法创建证书"
     
-    read -r -p "请输入你要使用的域名: " domain
+    read -r -p "$(echo -e ${COLOR_INFO}请输入你要使用的域名: ${COLOR_NONE})" domain
     
     # 创建证书
     if certbot certonly --standalone -d "${domain}"; then
@@ -257,7 +261,7 @@ select_domain() {
     if [ ! -s "${DOMAIN_LIST}" ]; then
         print_error "域名列表为空，请先创建SSL证书"
         return 1
-    fi
+    }
 
     print_info "可用的域名列表："
     mapfile -t domains < "${DOMAIN_LIST}"
@@ -294,8 +298,8 @@ install_https_proxy() {
     fi
 
     # 获取用户输入
-    read -r -p "请输入代理用户名: " USER
-    read -r -s -p "请输入代理密码: " PASS
+    read -r -p "$(echo -e ${COLOR_INFO}请输入代理用户名: ${COLOR_NONE})" USER
+    read -r -s -p "$(echo -e ${COLOR_INFO}请输入代理密码: ${COLOR_NONE})" PASS
     echo
 
     # 生成随机端口（1024-65535之间）
@@ -315,10 +319,12 @@ install_https_proxy() {
     fi
 
     print_info "开始创建HTTPS代理..."
+    print_divider
     print_info "使用以下配置："
     print_info "域名: ${domain}"
     print_info "端口: ${PORT}"
     print_info "用户名: ${USER}"
+    print_divider
 
     # 运行容器
     docker run -d --restart=always --name "${PORT}" \
@@ -328,12 +334,14 @@ install_https_proxy() {
 
     if [ $? -eq 0 ]; then
         print_success "HTTPS代理创建成功！"
-        echo "代理信息："
-        echo "地址: ${domain}:${PORT}"
-        echo "用户名: ${USER}"
-        echo "密码: ${PASS}"
+        print_divider
+        print_info "代理信息："
+        print_info "地址: ${domain}:${PORT}"
+        print_info "用户名: ${USER}"
+        print_info "密码: ${PASS}"
+        print_divider
         # 保存配置到文件
-        echo "${domain}:${PORT} ${USER}:${PASS}" >> "${PROXY_INFO}"
+        echo "HTTPS ${domain}:${PORT} ${USER}:${PASS}" >> "${PROXY_INFO}"
         print_success "配置已保存到: ${PROXY_INFO}"
     else
         print_error "HTTPS代理创建失败！"
@@ -363,9 +371,11 @@ install_http_proxy() {
     fi
 
     print_info "开始创建HTTP代理..."
+    print_divider
     print_info "使用以下配置："
     print_info "IP: ${BIND_IP}"
     print_info "端口: ${PORT}"
+    print_divider
 
     # 运行容器
     docker run -d --restart=always --name "${PORT}" \
@@ -374,13 +384,54 @@ install_http_proxy() {
 
     if [ $? -eq 0 ]; then
         print_success "HTTP代理创建成功！"
-        echo "代理信息："
-        echo "地址: ${BIND_IP}:${PORT}"
+        print_divider
+        print_info "代理信息："
+        print_info "地址: ${BIND_IP}:${PORT}"
+        print_divider
         # 保存配置到文件
         echo "HTTP ${BIND_IP}:${PORT}" >> "${PROXY_INFO}"
         print_success "配置已保存到: ${PROXY_INFO}"
     else
         print_error "HTTP代理创建失败！"
+    fi
+}
+
+delete_proxy() {
+    if [ ! -f "${PROXY_INFO}" ] || [ ! -s "${PROXY_INFO}" ]; then
+        print_warn "暂无代理配置信息"
+        return
+    fi
+
+    print_info "当前配置的代理列表："
+    print_divider
+    
+    # 读取并显示所有代理
+    mapfile -t proxies < "${PROXY_INFO}"
+    for i in "${!proxies[@]}"; do
+        echo -e "${COLOR_INFO}$((i+1)). ${proxies[$i]}${COLOR_NONE}"
+    done
+    print_divider
+
+    read -r -p "$(echo -e ${COLOR_INFO}请选择要删除的代理序号: ${COLOR_NONE})" choice
+
+    if ! [[ "$choice" =~ ^[0-9]+$ ]] || [ "$choice" -lt 1 ] || [ "$choice" -gt "${#proxies[@]}" ]; then
+        print_error "无效的选择"
+        return
+    fi
+
+    # 获取选中的代理信息
+    selected_proxy="${proxies[$((choice-1))]}"
+    
+    # 提取端口号
+    port=$(echo "$selected_proxy" | grep -o ':[0-9]\+' | cut -d':' -f2)
+    
+    # 停止并删除Docker容器
+    if docker stop "$port" && docker rm "$port"; then
+        # 从配置文件中删除对应行
+        sed -i "${choice}d" "${PROXY_INFO}"
+        print_success "代理已成功删除"
+    else
+        print_error "删除代理失败"
     fi
 }
 
@@ -411,12 +462,12 @@ init(){
 
     print_info "===== GOST 代理服务器安装脚本 ====="
     COLUMNS=50
-    echo -e "\n菜单选项\n"
+    echo -e "\n${COLOR_INFO}菜单选项${COLOR_NONE}\n"
 
     while true
     do
-        echo -e "${COLOR_INFO}------------------------${COLOR_NONE}"
-        PS3="请选择一个选项: "
+        print_divider
+        PS3="$(echo -e ${COLOR_INFO}请选择一个选项: ${COLOR_NONE})"
         re='^[0-9]+$'
         select opt in "安装 TCP BBR 拥塞控制算法" \
                      "安装 Docker 服务程序" \
@@ -425,6 +476,7 @@ init(){
                      "创建 HTTP 代理" \
                      "创建证书更新定时任务" \
                      "查看已配置的代理信息" \
+                     "删除代理节点" \
                      "退出" ; do
 
             if ! [[ $REPLY =~ $re ]] ; then
@@ -451,12 +503,19 @@ init(){
             elif (( REPLY == 7 )) ; then
                 if [ -f "${PROXY_INFO}" ]; then
                     print_info "已配置的代理信息："
-                    cat "${PROXY_INFO}"
+                    print_divider
+                    while IFS= read -r line; do
+                        echo -e "${COLOR_INFO}${line}${COLOR_NONE}"
+                    done < "${PROXY_INFO}"
+                    print_divider
                 else
                     print_warn "暂无代理配置信息"
                 fi
                 break
             elif (( REPLY == 8 )) ; then
+                delete_proxy
+                break
+            elif (( REPLY == 9 )) ; then
                 print_success "感谢使用，再见！"
                 exit
             else
