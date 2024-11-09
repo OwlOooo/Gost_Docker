@@ -201,7 +201,73 @@ create_cron_job(){
         echo -e "${COLOR_SUCC}成功安装gost更新证书定时作业！${COLOR_NONE}"
     fi
 }
+# 添加这个新函数到脚本中
+install_https_proxy() {
+    if ! [ -x "$(command -v docker)" ]; then
+        echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
+        return
+    }
 
+    # 检查证书目录
+    echo "检查SSL证书..."
+    read -r -p "请输入域名：" DOMAIN
+    
+    CERT_DIR=/etc/letsencrypt
+    CERT=${CERT_DIR}/live/${DOMAIN}/fullchain.pem
+    KEY=${CERT_DIR}/live/${DOMAIN}/privkey.pem
+    
+    # 检查证书是否存在
+    if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
+        echo -e "${COLOR_ERROR}未找到域名 ${DOMAIN} 的SSL证书，请先创建证书！${COLOR_NONE}"
+        return
+    }
+
+    # 生成随机端口（1024-65535之间）
+    PORT=$(shuf -i 1024-65535 -n 1)
+    
+    # 固定的配置
+    BIND_IP=0.0.0.0
+    USER=admin
+    PASS=admin123
+
+    # 检查端口是否被占用
+    while lsof -i :"$PORT" >/dev/null 2>&1; do
+        echo "端口 $PORT 已被占用，重新生成..."
+        PORT=$(shuf -i 1024-65535 -n 1)
+    done
+
+    # 检查是否已存在同名容器
+    if docker ps -a --format '{{.Names}}' | grep -q "^${PORT}$"; then
+        echo -e "${COLOR_ERROR}已存在相同名称的容器，正在删除...${COLOR_NONE}"
+        docker rm -f "${PORT}" >/dev/null 2>&1
+    fi
+
+    echo "开始创建HTTPS代理..."
+    echo "使用以下配置："
+    echo "域名: ${DOMAIN}"
+    echo "端口: ${PORT}"
+    echo "用户名: ${USER}"
+    echo "密码: ${PASS}"
+
+    # 运行容器
+    docker run -d --name "${PORT}" \
+        -v ${CERT_DIR}:${CERT_DIR}:ro \
+        --net=host ginuerzh/gost \
+        -L "http2://${USER}:${PASS}@${BIND_IP}:${PORT}?cert=${CERT}&key=${KEY}"
+
+    if [ $? -eq 0 ]; then
+        echo -e "${COLOR_SUCC}HTTPS代理创建成功！${COLOR_NONE}"
+        echo "代理信息："
+        echo "地址: ${DOMAIN}:${PORT}"
+        echo "用户名: ${USER}"
+        echo "密码: ${PASS}"
+        # 保存配置到文件
+        echo "${DOMAIN}:${PORT} ${USER}:${PASS}" >> /root/proxy_info.txt
+        echo "配置已保存到 /root/proxy_info.txt"
+    else
+        echo -e "${COLOR_ERROR}HTTPS代理创建失败！${COLOR_NONE}"
+    fi
+}
 init(){
     # 检测系统类型
     check_sys
@@ -233,6 +299,7 @@ init(){
                      "安装 VPN/L2TP 服务" \
                      "安装 Brook 代理服务" \
                      "创建证书更新 CronJob" \
+                     "创建 HTTPS 代理" \
                      "退出" ; do
 
             if ! [[ $REPLY =~ $re ]] ; then
@@ -262,7 +329,10 @@ init(){
             elif (( REPLY == 8 )) ; then
                 create_cron_job
                 break
-            elif (( REPLY == 9 )) ; then
+           elif (( REPLY == 9 )) ; then
+                install_https_proxy
+                break
+            elif (( REPLY == 10 )) ; then
                 exit
             else
                 echo -e "${COLOR_ERROR}无效的选项，请重试。${COLOR_NONE}"
