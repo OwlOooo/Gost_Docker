@@ -4,10 +4,33 @@
 COLOR_ERROR="\e[38;5;198m"
 COLOR_NONE="\e[0m"
 COLOR_SUCC="\e[92m"
+COLOR_INFO="\e[94m"
+COLOR_WARN="\e[93m"
+
+# GOST configuration directory
+GOST_DIR="/gost"
+DOMAIN_LIST="${GOST_DIR}/domain_list.txt"
+PROXY_INFO="${GOST_DIR}/proxy_info.txt"
+
+# 输出带颜色的信息
+print_info() {
+    echo -e "${COLOR_INFO}[INFO] $1${COLOR_NONE}"
+}
+
+print_success() {
+    echo -e "${COLOR_SUCC}[SUCCESS] $1${COLOR_NONE}"
+}
+
+print_error() {
+    echo -e "${COLOR_ERROR}[ERROR] $1${COLOR_NONE}"
+}
+
+print_warn() {
+    echo -e "${COLOR_WARN}[WARN] $1${COLOR_NONE}"
+}
 
 # 检测系统类型和版本
 check_sys() {
-    # 判断是什么系统
     if grep -Eqi "CentOS" /etc/issue || grep -Eq "CentOS" /etc/*-release; then
         DISTRO='CentOS'
     elif grep -Eqi "Debian" /etc/issue || grep -Eq "Debian" /etc/*-release; then
@@ -30,18 +53,29 @@ get_package_manager() {
 
 # 安装基础依赖
 install_base_packages() {
+    print_info "安装基础依赖包..."
     if [[ $PM == "yum" ]]; then
         $PM install -y epel-release
         $PM update -y
-        $PM install -y curl wget git lsof
+        $PM install -y curl wget git lsof crontabs
     else
         $PM update
-        $PM install -y curl wget git lsof
+        $PM install -y curl wget git lsof cron
     fi
+    print_success "基础依赖包安装完成"
+}
+
+# 初始化GOST目录
+init_gost_dir() {
+    print_info "初始化GOST目录..."
+    mkdir -p "${GOST_DIR}"
+    touch "${DOMAIN_LIST}"
+    touch "${PROXY_INFO}"
+    print_success "GOST目录初始化完成"
 }
 
 update_core() {
-    echo -e "${COLOR_ERROR}当前系统内核版本太低 <$VERSION_CURR>, 需要更新系统内核。${COLOR_NONE}"
+    print_error "当前系统内核版本太低 <$VERSION_CURR>, 需要更新系统内核"
     
     if [[ $DISTRO == "CentOS" ]]; then
         # CentOS 7 升级内核
@@ -55,15 +89,17 @@ update_core() {
         $PM autoremove -y
     fi
 
-    echo -e "${COLOR_SUCC}内核更新完成, 重新启动机器...${COLOR_NONE}"
+    print_success "内核更新完成, 重新启动机器..."
     reboot
 }
 
 install_docker() {
     if command -v docker >/dev/null 2>&1; then
-        echo -e "${COLOR_SUCC}Docker 已经安装${COLOR_NONE}"
+        print_success "Docker 已经安装"
         return
     fi
+
+    print_info "开始安装 Docker..."
 
     if [[ $DISTRO == "CentOS" ]]; then
         # 安装 Docker - CentOS
@@ -99,13 +135,13 @@ install_docker() {
     systemctl enable docker
     systemctl start docker
 
-    echo -e "${COLOR_SUCC}Docker 安装成功${COLOR_NONE}"
+    print_success "Docker 安装成功"
 }
 
 check_bbr() {
     has_bbr=$(lsmod | grep bbr)
     if [ -n "$has_bbr" ] ; then
-        echo -e "${COLOR_SUCC}TCP BBR 拥塞控制算法已经启动${COLOR_NONE}"
+        print_success "TCP BBR 拥塞控制算法已经启动"
         return 0
     else
         start_bbr
@@ -129,7 +165,7 @@ install_bbr() {
 }
 
 start_bbr() {
-    echo "启动 TCP BBR 拥塞控制算法"
+    print_info "启动 TCP BBR 拥塞控制算法"
     
     # 确保目录存在
     mkdir -p /etc/modules-load.d
@@ -148,15 +184,15 @@ EOF
     
     # 验证 BBR 是否启用
     if sysctl net.ipv4.tcp_congestion_control | grep -q bbr && lsmod | grep -q tcp_bbr; then
-        echo -e "${COLOR_SUCC}BBR 已成功启用${COLOR_NONE}"
+        print_success "BBR 已成功启用"
     else
-        echo -e "${COLOR_ERROR}BBR 启用失败，请检查系统配置${COLOR_NONE}"
+        print_error "BBR 启用失败，请检查系统配置"
     fi
 }
 
 install_certbot() {
     if ! [ -x "$(command -v certbot)" ]; then
-        echo "开始安装 certbot 命令行工具"
+        print_info "开始安装 certbot 命令行工具"
         if [[ $DISTRO == "CentOS" ]]; then
             $PM install -y certbot
         else
@@ -170,75 +206,119 @@ create_cert() {
         install_certbot
     fi
 
-    echo "开始生成 SSL 证书"
-    echo -e "${COLOR_ERROR}注意：生成证书前,需要将域名指向一个有效的 IP,否则无法创建证书.${COLOR_NONE}"
+    print_info "开始生成 SSL 证书"
+    print_warn "注意：生成证书前,需要将域名指向一个有效的 IP,否则无法创建证书"
     
-
-    read -r -p "请输入你要使用的域名:" domain
-    certbot certonly --standalone -d "${domain}"
+    read -r -p "请输入你要使用的域名: " domain
+    
+    # 创建证书
+    if certbot certonly --standalone -d "${domain}"; then
+        print_success "SSL证书创建成功"
+        # 将域名添加到域名列表
+        if ! grep -q "^${domain}$" "${DOMAIN_LIST}"; then
+            echo "${domain}" >> "${DOMAIN_LIST}"
+            print_success "域名已添加到列表: ${DOMAIN_LIST}"
+        fi
+    else
+        print_error "SSL证书创建失败"
+    fi
 }
 
 create_cron_job() {
-    # 确保目录存在
-    mkdir -p /var/spool/cron/crontabs/
-    
-    if ! crontab -l 2>/dev/null | grep -q "certbot renew --force-renewal"; then
-        (crontab -l 2>/dev/null; echo "0 0 1 * * /usr/bin/certbot renew --force-renewal") | crontab -
-        echo -e "${COLOR_SUCC}成功安装证书renew定时作业！${COLOR_NONE}"
+    print_info "配置证书自动更新定时任务..."
+
+    # 确保cron服务已安装并运行
+    if [[ $DISTRO == "CentOS" ]]; then
+        yum install -y cronie
+        systemctl enable crond
+        systemctl start crond
+    else
+        apt install -y cron
+        systemctl enable cron
+        systemctl start cron
     fi
 
-    if ! crontab -l 2>/dev/null | grep -q "docker restart gost"; then
-        (crontab -l 2>/dev/null; echo "5 0 1 * * /usr/bin/docker restart gost") | crontab -
-        echo -e "${COLOR_SUCC}成功安装gost更新证书定时作业！${COLOR_NONE}"
+    # 创建更新脚本
+    cat > "${GOST_DIR}/renew_cert.sh" << 'EOF'
+#!/bin/bash
+/usr/bin/certbot renew --force-renewal
+/usr/bin/docker restart gost
+EOF
+
+    chmod +x "${GOST_DIR}/renew_cert.sh"
+
+    # 添加定时任务
+    (crontab -l 2>/dev/null | grep -v "renew_cert.sh"; echo "0 0 1 * * ${GOST_DIR}/renew_cert.sh") | sort - | uniq - | crontab -
+
+    print_success "证书自动更新定时任务配置完成"
+}
+
+select_domain() {
+    if [ ! -s "${DOMAIN_LIST}" ]; then
+        print_error "域名列表为空，请先创建SSL证书"
+        return 1
     fi
+
+    print_info "可用的域名列表："
+    mapfile -t domains < "${DOMAIN_LIST}"
+    select domain in "${domains[@]}"; do
+        if [ -n "$domain" ]; then
+            return 0
+        else
+            print_error "无效的选择，请重试"
+        fi
+    done
 }
 
 install_https_proxy() {
     if ! [ -x "$(command -v docker)" ]; then
-        echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
+        print_error "未发现Docker，请先安装 Docker!"
+        return
+    fi
+
+    # 选择域名
+    print_info "请选择要使用的域名："
+    if ! select_domain; then
         return
     fi
 
     # 检查证书目录
-    echo "检查SSL证书..."
-    read -r -p "请输入域名：" DOMAIN
-    
     CERT_DIR=/etc/letsencrypt
-    CERT=${CERT_DIR}/live/${DOMAIN}/fullchain.pem
-    KEY=${CERT_DIR}/live/${DOMAIN}/privkey.pem
+    CERT=${CERT_DIR}/live/${domain}/fullchain.pem
+    KEY=${CERT_DIR}/live/${domain}/privkey.pem
     
     # 检查证书是否存在
     if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
-        echo -e "${COLOR_ERROR}未找到域名 ${DOMAIN} 的SSL证书，请先创建证书！${COLOR_NONE}"
+        print_error "未找到域名 ${domain} 的SSL证书，请先创建证书！"
         return
     fi
 
+    # 获取用户输入
+    read -r -p "请输入代理用户名: " USER
+    read -r -s -p "请输入代理密码: " PASS
+    echo
+
     # 生成随机端口（1024-65535之间）
     PORT=$(shuf -i 1024-65535 -n 1)
-    
-    # 固定的配置
     BIND_IP=0.0.0.0
-    USER=admin
-    PASS=admin123
-
+    
     # 检查端口是否被占用
     while lsof -i :"$PORT" >/dev/null 2>&1; do
-        echo "端口 $PORT 已被占用，重新生成..."
+        print_warn "端口 $PORT 已被占用，重新生成..."
         PORT=$(shuf -i 1024-65535 -n 1)
     done
 
     # 检查是否已存在同名容器
     if docker ps -a --format '{{.Names}}' | grep -q "^${PORT}$"; then
-        echo -e "${COLOR_ERROR}已存在相同名称的容器，正在删除...${COLOR_NONE}"
+        print_warn "已存在相同名称的容器，正在删除..."
         docker rm -f "${PORT}" >/dev/null 2>&1
     fi
 
-    echo "开始创建HTTPS代理..."
-    echo "使用以下配置："
-    echo "域名: ${DOMAIN}"
-    echo "端口: ${PORT}"
-    echo "用户名: ${USER}"
-    echo "密码: ${PASS}"
+    print_info "开始创建HTTPS代理..."
+    print_info "使用以下配置："
+    print_info "域名: ${domain}"
+    print_info "端口: ${PORT}"
+    print_info "用户名: ${USER}"
 
     # 运行容器
     docker run -d --restart=always --name "${PORT}" \
@@ -247,22 +327,22 @@ install_https_proxy() {
         -L "http2://${USER}:${PASS}@${BIND_IP}:${PORT}?cert=${CERT}&key=${KEY}"
 
     if [ $? -eq 0 ]; then
-        echo -e "${COLOR_SUCC}HTTPS代理创建成功！${COLOR_NONE}"
+        print_success "HTTPS代理创建成功！"
         echo "代理信息："
-        echo "地址: ${DOMAIN}:${PORT}"
+        echo "地址: ${domain}:${PORT}"
         echo "用户名: ${USER}"
         echo "密码: ${PASS}"
         # 保存配置到文件
-        echo "${DOMAIN}:${PORT} ${USER}:${PASS}" >> /root/proxy_info.txt
-        echo "配置已保存到 /root/proxy_info.txt"
+        echo "${domain}:${PORT} ${USER}:${PASS}" >> "${PROXY_INFO}"
+        print_success "配置已保存到: ${PROXY_INFO}"
     else
-        echo -e "${COLOR_ERROR}HTTPS代理创建失败！${COLOR_NONE}"
+        print_error "HTTPS代理创建失败！"
     fi
 }
 
 install_http_proxy() {
     if ! [ -x "$(command -v docker)" ]; then
-        echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
+        print_error "未发现Docker，请先安装 Docker!"
         return
     fi
 
@@ -272,20 +352,20 @@ install_http_proxy() {
     
     # 检查端口是否被占用
     while lsof -i :"$PORT" >/dev/null 2>&1; do
-        echo "端口 $PORT 已被占用，重新生成..."
+        print_warn "端口 $PORT 已被占用，重新生成..."
         PORT=$(shuf -i 1024-65535 -n 1)
     done
 
     # 检查是否已存在同名容器
     if docker ps -a --format '{{.Names}}' | grep -q "^${PORT}$"; then
-        echo -e "${COLOR_ERROR}已存在相同名称的容器，正在删除...${COLOR_NONE}"
+        print_warn "已存在相同名称的容器，正在删除..."
         docker rm -f "${PORT}" >/dev/null 2>&1
     fi
 
-    echo "开始创建HTTP代理..."
-    echo "使用以下配置："
-    echo "IP: ${BIND_IP}"
-    echo "端口: ${PORT}"
+    print_info "开始创建HTTP代理..."
+    print_info "使用以下配置："
+    print_info "IP: ${BIND_IP}"
+    print_info "端口: ${PORT}"
 
     # 运行容器
     docker run -d --restart=always --name "${PORT}" \
@@ -293,20 +373,19 @@ install_http_proxy() {
         -L "http://${BIND_IP}:${PORT}"
 
     if [ $? -eq 0 ]; then
-        echo -e "${COLOR_SUCC}HTTP代理创建成功！${COLOR_NONE}"
+        print_success "HTTP代理创建成功！"
         echo "代理信息："
         echo "地址: ${BIND_IP}:${PORT}"
         # 保存配置到文件
-        echo "HTTP ${BIND_IP}:${PORT}" >> /root/proxy_info.txt
-        echo "配置已保存到 /root/proxy_info.txt"
+        echo "HTTP ${BIND_IP}:${PORT}" >> "${PROXY_INFO}"
+        print_success "配置已保存到: ${PROXY_INFO}"
     else
-        echo -e "${COLOR_ERROR}HTTP代理创建失败！${COLOR_NONE}"
+        print_error "HTTP代理创建失败！"
     fi
 }
 
-# 添加缺失的函数声明
 install_gost() {
-    echo "安装 Gost HTTP/2 代理服务"
+    print_info "安装 Gost HTTP/2 代理服务"
     install_docker
     install_https_proxy
 }
@@ -315,35 +394,41 @@ init(){
     # 检测系统类型
     check_sys
     if [[ $DISTRO == "unknow" ]]; then
-        echo -e "${COLOR_ERROR}不支持的系统类型${COLOR_NONE}"
+        print_error "不支持的系统类型"
         exit 1
     fi
-    echo -e "${COLOR_SUCC}当前系统为: $DISTRO${COLOR_NONE}"
+    print_success "当前系统为: $DISTRO"
     
     # 获取包管理器
     get_package_manager
-    echo -e "${COLOR_SUCC}使用包管理器: $PM${COLOR_NONE}"
+    print_success "使用包管理器: $PM"
+    
+    # 初始化GOST目录
+    init_gost_dir
     
     # 安装基础依赖
     install_base_packages
 
+    print_info "===== GOST 代理服务器安装脚本 ====="
     COLUMNS=50
     echo -e "\n菜单选项\n"
 
     while true
     do
-        PS3="请选择一个选项："
+        echo -e "${COLOR_INFO}------------------------${COLOR_NONE}"
+        PS3="请选择一个选项: "
         re='^[0-9]+$'
         select opt in "安装 TCP BBR 拥塞控制算法" \
                      "安装 Docker 服务程序" \
                      "创建 SSL 证书" \
                      "创建 HTTPS 代理" \
                      "创建 HTTP 代理" \
-                     "创建证书更新 CronJob" \
+                     "创建证书更新定时任务" \
+                     "查看已配置的代理信息" \
                      "退出" ; do
 
             if ! [[ $REPLY =~ $re ]] ; then
-                echo -e "${COLOR_ERROR}无效的选项，请输入数字。${COLOR_NONE}"
+                print_error "无效的选项，请输入数字"
                 break
             elif (( REPLY == 1 )) ; then
                 install_bbr
@@ -354,22 +439,38 @@ init(){
             elif (( REPLY == 3 )) ; then
                 create_cert
                 break
-           elif (( REPLY == 4 )) ; then
+            elif (( REPLY == 4 )) ; then
                 install_https_proxy
                 break
-           elif (( REPLY == 5 )) ; then
+            elif (( REPLY == 5 )) ; then
                 install_http_proxy
                 break
-           elif (( REPLY == 6 )) ; then
+            elif (( REPLY == 6 )) ; then
                 create_cron_job
                 break
             elif (( REPLY == 7 )) ; then
+                if [ -f "${PROXY_INFO}" ]; then
+                    print_info "已配置的代理信息："
+                    cat "${PROXY_INFO}"
+                else
+                    print_warn "暂无代理配置信息"
+                fi
+                break
+            elif (( REPLY == 8 )) ; then
+                print_success "感谢使用，再见！"
                 exit
             else
-                echo -e "${COLOR_ERROR}无效的选项，请重试。${COLOR_NONE}"
+                print_error "无效的选项，请重试"
             fi
         done
     done
 }
 
+# 确保脚本以root权限运行
+if [ "$EUID" -ne 0 ]; then
+    print_error "请以root权限运行此脚本"
+    exit 1
+fi
+
+# 启动主程序
 init
