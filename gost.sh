@@ -6,7 +6,7 @@ COLOR_NONE="\e[0m"
 COLOR_SUCC="\e[92m"
 
 # 检测系统类型和版本
-check_sys(){
+check_sys() {
     # 判断是什么系统
     if grep -Eqi "CentOS" /etc/issue || grep -Eq "CentOS" /etc/*-release; then
         DISTRO='CentOS'
@@ -33,14 +33,14 @@ install_base_packages() {
     if [[ $PM == "yum" ]]; then
         $PM install -y epel-release
         $PM update -y
-        $PM install -y curl wget git
+        $PM install -y curl wget git lsof
     else
         $PM update
-        $PM install -y curl wget git
+        $PM install -y curl wget git lsof
     fi
 }
 
-update_core(){
+update_core() {
     echo -e "${COLOR_ERROR}当前系统内核版本太低 <$VERSION_CURR>, 需要更新系统内核。${COLOR_NONE}"
     
     if [[ $DISTRO == "CentOS" ]]; then
@@ -102,9 +102,9 @@ install_docker() {
     echo -e "${COLOR_SUCC}Docker 安装成功${COLOR_NONE}"
 }
 
-check_bbr(){
+check_bbr() {
     has_bbr=$(lsmod | grep bbr)
-    if [ -n "$has_bbr" ] ;then
+    if [ -n "$has_bbr" ] ; then
         echo -e "${COLOR_SUCC}TCP BBR 拥塞控制算法已经启动${COLOR_NONE}"
         return 0
     else
@@ -113,7 +113,11 @@ check_bbr(){
     fi
 }
 
-install_bbr(){
+version_ge() {
+    test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" == "$1"
+}
+
+install_bbr() {
     VERSION_CURR=$(uname -r | awk -F '-' '{print $1}')
     VERSION_MIN="4.9.0"
 
@@ -124,7 +128,7 @@ install_bbr(){
     fi
 }
 
-start_bbr(){
+start_bbr() {
     echo "启动 TCP BBR 拥塞控制算法"
     
     # 确保目录存在
@@ -161,14 +165,6 @@ install_certbot() {
     fi
 }
 
-version_ge() {
-    test "$(echo "$@" | tr " " "\n" | sort -rV | head -n 1)" == "$1"
-}
-
-check_container() {
-    docker ps -a --format '{{.Names}}' | grep -q "^$1$"
-}
-
 create_cert() {
     if ! [ -x "$(command -v certbot)" ]; then
         install_certbot
@@ -178,7 +174,7 @@ create_cert() {
     echo -e "${COLOR_ERROR}注意：生成证书前,需要将域名指向一个有效的 IP,否则无法创建证书.${COLOR_NONE}"
     read -r -p "是否已经将域名指向了 IP？[Y/n]" has_record
 
-    if ! [[ "$has_record" = "Y" ]] ;then
+    if ! [[ "$has_record" = "Y" ]] ; then
         echo "请操作完成后再继续."
         return
     fi
@@ -187,7 +183,7 @@ create_cert() {
     certbot certonly --standalone -d "${domain}"
 }
 
-create_cron_job(){
+create_cron_job() {
     # 确保目录存在
     mkdir -p /var/spool/cron/crontabs/
     
@@ -201,12 +197,12 @@ create_cron_job(){
         echo -e "${COLOR_SUCC}成功安装gost更新证书定时作业！${COLOR_NONE}"
     fi
 }
-# 添加这个新函数到脚本中
+
 install_https_proxy() {
     if ! [ -x "$(command -v docker)" ]; then
         echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
         return
-    }
+    fi
 
     # 检查证书目录
     echo "检查SSL证书..."
@@ -220,7 +216,7 @@ install_https_proxy() {
     if [ ! -f "$CERT" ] || [ ! -f "$KEY" ]; then
         echo -e "${COLOR_ERROR}未找到域名 ${DOMAIN} 的SSL证书，请先创建证书！${COLOR_NONE}"
         return
-    }
+    fi
 
     # 生成随机端口（1024-65535之间）
     PORT=$(shuf -i 1024-65535 -n 1)
@@ -268,12 +264,12 @@ install_https_proxy() {
         echo -e "${COLOR_ERROR}HTTPS代理创建失败！${COLOR_NONE}"
     fi
 }
-# 添加 HTTP 代理安装函数
+
 install_http_proxy() {
     if ! [ -x "$(command -v docker)" ]; then
         echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
         return
-    }
+    fi
 
     # 生成随机端口（1024-65535之间）
     PORT=$(shuf -i 1024-65535 -n 1)
@@ -312,6 +308,14 @@ install_http_proxy() {
         echo -e "${COLOR_ERROR}HTTP代理创建失败！${COLOR_NONE}"
     fi
 }
+
+# 添加缺失的函数声明
+install_gost() {
+    echo "安装 Gost HTTP/2 代理服务"
+    install_docker
+    install_https_proxy
+}
+
 init(){
     # 检测系统类型
     check_sys
@@ -338,13 +342,9 @@ init(){
         select opt in "安装 TCP BBR 拥塞控制算法" \
                      "安装 Docker 服务程序" \
                      "创建 SSL 证书" \
-                     "安装 Gost HTTP/2 代理服务" \
-                     "安装 ShadowSocks 代理服务" \
-                     "安装 VPN/L2TP 服务" \
-                     "安装 Brook 代理服务" \
-                     "创建证书更新 CronJob" \
                      "创建 HTTPS 代理" \
                      "创建 HTTP 代理" \
+                     "创建证书更新 CronJob" \
                      "退出" ; do
 
             if ! [[ $REPLY =~ $re ]] ; then
@@ -359,28 +359,16 @@ init(){
             elif (( REPLY == 3 )) ; then
                 create_cert
                 break
-            elif (( REPLY == 4 )) ; then
-                install_gost
-                break
-            elif (( REPLY == 5  )) ; then
-                install_shadowsocks
-                break
-            elif (( REPLY == 6 )) ; then
-                install_vpn
-                break
-            elif (( REPLY == 7 )) ; then
-                install_brook
-                break
-            elif (( REPLY == 8 )) ; then
-                create_cron_job
-                break
-           elif (( REPLY == 9 )) ; then
+           elif (( REPLY == 4 )) ; then
                 install_https_proxy
                 break
-           elif (( REPLY == 10 )) ; then
+           elif (( REPLY == 5 )) ; then
                 install_http_proxy
                 break
-            elif (( REPLY == 11 )) ; then
+           elif (( REPLY == 6 )) ; then
+                create_cron_job
+                break
+            elif (( REPLY == 7 )) ; then
                 exit
             else
                 echo -e "${COLOR_ERROR}无效的选项，请重试。${COLOR_NONE}"
