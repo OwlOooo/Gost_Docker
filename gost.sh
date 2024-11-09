@@ -1,11 +1,12 @@
 #!/bin/bash
 
 # Colors
-COLOR_ERROR="\e[38;5;198m"
-COLOR_NONE="\e[1m"
-COLOR_SUCC="\e[92m"
-COLOR_INFO="\e[94m"
-COLOR_WARN="\e[93m"
+# Colors
+COLOR_ERROR="\e[1;31m"      # 红色
+COLOR_NONE="\e[0m"          # 重置所有属性
+COLOR_SUCC="\e[1;32m"       # 绿色
+COLOR_INFO="\e[1;32m"       # 蓝色
+COLOR_WARN="\e[1;33m"       # 黄色
 
 # GOST configuration directory
 GOST_DIR="/gost"
@@ -102,7 +103,15 @@ install_docker() {
         print_success "Docker 已经安装"
         return
     fi
-
+   # 获取包管理器
+    get_package_manager
+    print_success "使用包管理器: $PM"
+    
+    # 初始化GOST目录
+    init_gost_dir
+    
+    # 安装基础依赖
+    install_base_packages
     print_info "开始安装 Docker..."
 
     if [[ $DISTRO == "CentOS" ]]; then
@@ -450,15 +459,7 @@ init(){
     fi
     print_success "当前系统为: $DISTRO"
     
-    # 获取包管理器
-    get_package_manager
-    print_success "使用包管理器: $PM"
-    
-    # 初始化GOST目录
-    init_gost_dir
-    
-    # 安装基础依赖
-    install_base_packages
+   
 
     print_info "===== GOST 代理服务器安装脚本 ====="
     COLUMNS=50
