@@ -261,7 +261,7 @@ select_domain() {
     if [ ! -s "${DOMAIN_LIST}" ]; then
         print_error "域名列表为空，请先创建SSL证书"
         return 1
-    }
+    fi
 
     print_info "可用的域名列表："
     mapfile -t domains < "${DOMAIN_LIST}"
