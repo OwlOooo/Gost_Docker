@@ -268,6 +268,50 @@ install_https_proxy() {
         echo -e "${COLOR_ERROR}HTTPS代理创建失败！${COLOR_NONE}"
     fi
 }
+# 添加 HTTP 代理安装函数
+install_http_proxy() {
+    if ! [ -x "$(command -v docker)" ]; then
+        echo -e "${COLOR_ERROR}未发现Docker，请先安装 Docker!${COLOR_NONE}"
+        return
+    }
+
+    # 生成随机端口（1024-65535之间）
+    PORT=$(shuf -i 1024-65535 -n 1)
+    BIND_IP=0.0.0.0
+    
+    # 检查端口是否被占用
+    while lsof -i :"$PORT" >/dev/null 2>&1; do
+        echo "端口 $PORT 已被占用，重新生成..."
+        PORT=$(shuf -i 1024-65535 -n 1)
+    done
+
+    # 检查是否已存在同名容器
+    if docker ps -a --format '{{.Names}}' | grep -q "^${PORT}$"; then
+        echo -e "${COLOR_ERROR}已存在相同名称的容器，正在删除...${COLOR_NONE}"
+        docker rm -f "${PORT}" >/dev/null 2>&1
+    fi
+
+    echo "开始创建HTTP代理..."
+    echo "使用以下配置："
+    echo "IP: ${BIND_IP}"
+    echo "端口: ${PORT}"
+
+    # 运行容器
+    docker run -d --name "${PORT}" \
+        --net=host ginuerzh/gost \
+        -L "http://${BIND_IP}:${PORT}"
+
+    if [ $? -eq 0 ]; then
+        echo -e "${COLOR_SUCC}HTTP代理创建成功！${COLOR_NONE}"
+        echo "代理信息："
+        echo "地址: ${BIND_IP}:${PORT}"
+        # 保存配置到文件
+        echo "HTTP ${BIND_IP}:${PORT}" >> /root/proxy_info.txt
+        echo "配置已保存到 /root/proxy_info.txt"
+    else
+        echo -e "${COLOR_ERROR}HTTP代理创建失败！${COLOR_NONE}"
+    fi
+}
 init(){
     # 检测系统类型
     check_sys
@@ -300,6 +344,7 @@ init(){
                      "安装 Brook 代理服务" \
                      "创建证书更新 CronJob" \
                      "创建 HTTPS 代理" \
+                     "创建 HTTP 代理" \
                      "退出" ; do
 
             if ! [[ $REPLY =~ $re ]] ; then
@@ -332,7 +377,10 @@ init(){
            elif (( REPLY == 9 )) ; then
                 install_https_proxy
                 break
-            elif (( REPLY == 10 )) ; then
+           elif (( REPLY == 10 )) ; then
+                install_http_proxy
+                break
+            elif (( REPLY == 11 )) ; then
                 exit
             else
                 echo -e "${COLOR_ERROR}无效的选项，请重试。${COLOR_NONE}"
