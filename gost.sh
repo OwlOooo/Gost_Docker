@@ -250,7 +250,7 @@ install_https_proxy() {
     echo "密码: ${PASS}"
 
     # 运行容器
-    docker run -d --name "${PORT}" \
+    docker run -d --restart=always --name "${PORT}" \
         -v ${CERT_DIR}:${CERT_DIR}:ro \
         --net=host ginuerzh/gost \
         -L "http2://${USER}:${PASS}@${BIND_IP}:${PORT}?cert=${CERT}&key=${KEY}"
@@ -297,7 +297,7 @@ install_http_proxy() {
     echo "端口: ${PORT}"
 
     # 运行容器
-    docker run -d --name "${PORT}" \
+    docker run -d --restart=always --name "${PORT}" \
         --net=host ginuerzh/gost \
         -L "http://${BIND_IP}:${PORT}"
 
