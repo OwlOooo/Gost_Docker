@@ -207,9 +207,12 @@ install_certbot() {
     if ! [ -x "$(command -v certbot)" ]; then
         print_info "开始安装 certbot 命令行工具"
         if [[ $DISTRO == "CentOS" ]]; then
-            $PM install -y certbot
+            yum install -y certbot
+        elif [[ $DISTRO == "Ubuntu" || $DISTRO == "Debian" ]]; then
+            apt-get install -y certbot
         else
-            $PM install -y certbot
+            print_error "不支持的操作系统"
+            return 1
         fi
     fi
 }
