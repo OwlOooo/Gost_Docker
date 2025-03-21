@@ -113,36 +113,38 @@ install_docker() {
     # 安装基础依赖
     install_base_packages
     print_info "开始安装 Docker..."
+    
+    bash <(curl -sSL https://linuxmirrors.cn/docker.sh) --protocol http --source download.docker.com --source-registry registry-1.docker.io --install-latest true --ignore-backup-tips
 
-    if [[ $DISTRO == "CentOS" ]]; then
-        # 安装 Docker - CentOS
-        $PM remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine
-        $PM install -y yum-utils
-        yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
-        $PM install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    else
-        # 安装 Docker - Debian/Ubuntu
-        $PM remove -y docker docker-engine docker.io containerd runc
-        $PM update
-        $PM install -y \
-            apt-transport-https \
-            ca-certificates \
-            curl \
-            gnupg \
-            lsb-release
+    # if [[ $DISTRO == "CentOS" ]]; then
+    #     # 安装 Docker - CentOS
+    #     $PM remove -y docker docker-client docker-client-latest docker-common docker-latest docker-latest-logrotate docker-logrotate docker-engine
+    #     $PM install -y yum-utils
+    #     yum-config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    #     $PM install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    # else
+    #     # 安装 Docker - Debian/Ubuntu
+    #     $PM remove -y docker docker-engine docker.io containerd runc
+    #     $PM update
+    #     $PM install -y \
+    #         apt-transport-https \
+    #         ca-certificates \
+    #         curl \
+    #         gnupg \
+    #         lsb-release
 
-        # 添加 Docker 的官方 GPG 密钥
-        mkdir -p /etc/apt/keyrings
-        curl -fsSL https://download.docker.com/linux/$DISTRO/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+    #     # 添加 Docker 的官方 GPG 密钥
+    #     mkdir -p /etc/apt/keyrings
+    #     curl -fsSL https://download.docker.com/linux/$DISTRO/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 
-        # 设置稳定版仓库
-        echo \
-            "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DISTRO \
-            $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
+    #     # 设置稳定版仓库
+    #     echo \
+    #         "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/$DISTRO \
+    #         $(lsb_release -cs) stable" > /etc/apt/sources.list.d/docker.list
 
-        $PM update
-        $PM install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
-    fi
+    #     $PM update
+    #     $PM install -y docker-ce docker-ce-cli containerd.io docker-compose-plugin
+    # fi
 
     # 启动 Docker
     systemctl enable docker
